@@ -1,5 +1,5 @@
 - 👋 Hi, I’m @jidall
-- 👀 I’m interested in program C++, Java, Phyton
+- 👀 I’m interested in programs like C++, Java, Phyton
 - 🌱 I’m currently learning to work with programming languages
 - 💞️ I’m looking to collaborate and learn
 - 📫 How to reach me, you can do it here
