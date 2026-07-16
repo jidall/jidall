@@ -1,0 +1,2 @@
+class MissingPlanError(RuntimeError):
+    pass
