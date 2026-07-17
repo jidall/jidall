@@ -44,7 +44,13 @@ def test_bat_launchers_only_delegate_to_python():
     assert root_launcher == [
         "@echo off",
         'cd /d "%~dp0"',
+        "echo [1] Entrou no BAT",
+        "echo [1] Entrou no BAT > build_windows.log",
+        "echo [2] Chamou Python",
+        "echo [2] Chamou Python >> build_windows.log",
         "py -3.12 scripts\\build_windows.py",
+        "echo [BAT] Python terminou; consulte build_windows.log para o resultado completo.",
+        "echo [BAT] Python terminou; consulte build_windows.log para o resultado completo. >> build_windows.log",
         "echo.",
         "pause",
     ]
@@ -94,3 +100,26 @@ def test_run_command_logs_complete_output_when_a_command_fails(monkeypatch, capl
 
     assert "erro detalhado" in caplog.text
     assert "linha final" in caplog.text
+
+
+def test_write_log_flushes_handlers_immediately():
+    class FlushTrackingHandler(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.flushes = 0
+
+        def emit(self, record):
+            pass
+
+        def flush(self):
+            self.flushes += 1
+
+    logger = logging.getLogger("test-immediate-build-log")
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+    handler = FlushTrackingHandler()
+    logger.addHandler(handler)
+
+    build_windows.write_log(logger, logging.INFO, "[5] Executando PyInstaller")
+
+    assert handler.flushes == 1

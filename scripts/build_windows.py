@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 
 
@@ -54,7 +55,7 @@ def configure_logger(log_file: Path) -> logging.Logger:
     logger.handlers.clear()
 
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    file_handler = logging.FileHandler(log_file, encoding="utf-8", mode="w")
+    file_handler = logging.FileHandler(log_file, encoding="utf-8", mode="a")
     file_handler.setFormatter(formatter)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -63,14 +64,24 @@ def configure_logger(log_file: Path) -> logging.Logger:
     return logger
 
 
+def write_log(logger: logging.Logger, level: int, message: str, *args: object) -> None:
+    """Write and flush a diagnostic entry before the next build action starts."""
+    logger.log(level, message, *args)
+    for handler in logger.handlers:
+        handler.flush()
+
+
 class WindowsBuilder:
     def __init__(self, paths: BuildPaths, logger: logging.Logger) -> None:
         self.paths = paths
         self.logger = logger
 
+    def log(self, message: str, *args: object) -> None:
+        write_log(self.logger, logging.INFO, message, *args)
+
     def run_command(self, command: list[str], *, description: str) -> None:
-        self.logger.info("\n%s", description)
-        self.logger.info("Comando: %s", subprocess.list2cmdline(command))
+        self.log("\n%s", description)
+        self.log("Comando: %s", subprocess.list2cmdline(command))
         try:
             completed = subprocess.run(
                 command,
@@ -92,11 +103,11 @@ class WindowsBuilder:
         if not output:
             return
         for line in output.rstrip().splitlines():
-            self.logger.info("  %s", line)
+            self.log("  %s", line)
 
     def ensure_virtual_environment(self) -> None:
         if self.paths.python.exists():
-            self.logger.info("Ambiente virtual existente: %s", self.paths.venv_dir)
+            self.log("Ambiente virtual existente: %s", self.paths.venv_dir)
             return
         self.run_command(
             [sys.executable, "-m", "venv", str(self.paths.venv_dir)],
@@ -126,8 +137,11 @@ class WindowsBuilder:
             ],
             description="Gerando Assistente de Provas.exe",
         )
+
+    def validate_executable(self) -> None:
         if not self.paths.executable.exists():
             raise BuildFailure(f"O executável esperado não foi gerado: {self.paths.executable}")
+        self.log("Executável validado: %s", self.paths.executable)
 
     def find_inno_setup(self) -> Path | None:
         executable = shutil.which("ISCC.exe") or shutil.which("iscc")
@@ -142,35 +156,47 @@ class WindowsBuilder:
         return None
 
     def build_installer(self) -> None:
+        self.log("[8] Procurando Inno Setup")
         iscc = self.find_inno_setup()
         if iscc is None:
             raise BuildFailure(
                 "Inno Setup 6 (ISCC.exe) não foi encontrado. Instale-o e execute este arquivo novamente."
             )
+        self.log("[9] Executando Inno Setup")
         self.run_command(
             [str(iscc), str(self.paths.root / "installer" / "assistente_de_provas.iss")],
             description="Gerando instalador Windows",
         )
         if not self.paths.installer.exists():
             raise BuildFailure(f"O instalador esperado não foi gerado: {self.paths.installer}")
+        self.log("Instalador validado: %s", self.paths.installer)
 
     def build(self) -> None:
-        self.logger.info("=== Assistente de Provas - Gerador de Instalador Windows ===")
-        self.logger.info("Pasta do projeto: %s", self.paths.root)
-        self.logger.info("Log completo: %s", self.paths.log_file)
-        self.logger.info("Python que iniciou o build: %s", sys.executable)
+        self.log("=== Assistente de Provas - Gerador de Instalador Windows ===")
+        self.log("[2] Python iniciou o build")
+        self.log("Pasta do projeto: %s", self.paths.root)
+        self.log("Log completo: %s", self.paths.log_file)
+        self.log("Python que iniciou o build: %s", sys.executable)
         if sys.version_info[:2] != (3, 12):
             raise BuildFailure("Python 3.12 é obrigatório. Execute GERAR_INSTALADOR_WINDOWS.bat com o Python Launcher instalado.")
         if os.name != "nt":
             raise BuildFailure("Este script deve ser executado no Windows para gerar o executável e o instalador.")
 
+        self.log("[3] Criando ou validando venv")
         self.ensure_virtual_environment()
+        self.log("[3] Venv disponível")
+        self.log("[4] Instalando requirements")
         self.install_dependencies()
+        self.log("[4] Requirements instalados")
+        self.log("[5] Executando PyInstaller")
         self.build_executable()
+        self.log("[6] PyInstaller terminou")
+        self.log("[7] Validando EXE")
+        self.validate_executable()
         self.build_installer()
-        self.logger.info("\nBuild concluído com sucesso.")
-        self.logger.info("Executável: %s", self.paths.executable)
-        self.logger.info("Instalador: %s", self.paths.installer)
+        self.log("[10] Build concluído")
+        self.log("Executável: %s", self.paths.executable)
+        self.log("Instalador: %s", self.paths.installer)
 
 
 def wait_for_enter() -> None:
@@ -188,12 +214,12 @@ def main() -> int:
         WindowsBuilder(paths, logger).build()
     except BuildFailure as error:
         exit_code = 1
-        logger.error("\nFALHA NO BUILD: %s", error)
+        write_log(logger, logging.ERROR, "\nFALHA NO BUILD: %s\n%s", error, traceback.format_exc())
     except Exception:
         exit_code = 1
-        logger.exception("\nFALHA INESPERADA NO BUILD")
+        write_log(logger, logging.ERROR, "\nFALHA INESPERADA NO BUILD\n%s", traceback.format_exc())
     finally:
-        logger.info("\nConsulte o log completo em: %s", paths.log_file)
+        write_log(logger, logging.INFO, "\nConsulte o log completo em: %s", paths.log_file)
         wait_for_enter()
     return exit_code
 
