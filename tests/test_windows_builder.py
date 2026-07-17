@@ -38,7 +38,59 @@ def test_find_inno_setup_uses_program_files(monkeypatch, tmp_path):
 
 def test_bat_launchers_only_delegate_to_python():
     repository = SCRIPT.parents[1]
-    for launcher in (repository / "GERAR_INSTALADOR_WINDOWS.bat", repository / "scripts" / "build_windows.bat"):
-        content = launcher.read_text(encoding="utf-8").lower()
-        assert "build_windows.py" in content
-        assert "powershell" not in content
+    root_launcher = (repository / "GERAR_INSTALADOR_WINDOWS.bat").read_text(encoding="utf-8").splitlines()
+    helper_launcher = (repository / "scripts" / "build_windows.bat").read_text(encoding="utf-8").splitlines()
+
+    assert root_launcher == [
+        "@echo off",
+        'cd /d "%~dp0"',
+        "py -3.12 scripts\\build_windows.py",
+        "echo.",
+        "pause",
+    ]
+    assert helper_launcher == [
+        "@echo off",
+        'cd /d "%~dp0\\.."',
+        "py -3.12 scripts\\build_windows.py",
+        "echo.",
+        "pause",
+    ]
+
+
+def test_run_command_uses_argument_list_check_true_and_project_cwd(monkeypatch, tmp_path):
+    calls: list[tuple[list[str], dict]] = []
+
+    def successful_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return build_windows.subprocess.CompletedProcess(command, 0, "processo concluído")
+
+    monkeypatch.setattr(build_windows.subprocess, "run", successful_run)
+    logger = logging.getLogger("test-build-command")
+    builder = build_windows.WindowsBuilder(build_windows.BuildPaths(tmp_path / "diretório (1)"), logger)
+
+    builder.run_command(["python.exe", "-m", "PyInstaller", "arquivo.spec"], description="Teste")
+
+    command, kwargs = calls[0]
+    assert command == ["python.exe", "-m", "PyInstaller", "arquivo.spec"]
+    assert kwargs["cwd"] == builder.paths.root
+    assert kwargs["check"] is True
+
+
+def test_run_command_logs_complete_output_when_a_command_fails(monkeypatch, caplog, tmp_path):
+    def failed_run(command, **kwargs):
+        raise build_windows.subprocess.CalledProcessError(9, command, output="erro detalhado\nlinha final")
+
+    monkeypatch.setattr(build_windows.subprocess, "run", failed_run)
+    logger = logging.getLogger("test-build-command-failure")
+    builder = build_windows.WindowsBuilder(build_windows.BuildPaths(tmp_path), logger)
+
+    with caplog.at_level(logging.INFO):
+        try:
+            builder.run_command(["iscc.exe", "arquivo.iss"], description="Gerando instalador")
+        except build_windows.BuildFailure as error:
+            assert "código de saída 9" in str(error)
+        else:
+            raise AssertionError("BuildFailure era esperado")
+
+    assert "erro detalhado" in caplog.text
+    assert "linha final" in caplog.text

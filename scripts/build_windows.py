@@ -12,7 +12,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import traceback
 from dataclasses import dataclass
 
 
@@ -79,16 +78,21 @@ class WindowsBuilder:
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                check=False,
+                check=True,
             )
+        except subprocess.CalledProcessError as error:
+            self._log_command_output(error.stdout)
+            raise BuildFailure(f"{description} falhou com código de saída {error.returncode}.") from error
         except OSError as error:
             raise BuildFailure(f"Não foi possível iniciar '{command[0]}': {error}") from error
 
-        if completed.stdout:
-            for line in completed.stdout.rstrip().splitlines():
-                self.logger.info("  %s", line)
-        if completed.returncode:
-            raise BuildFailure(f"{description} falhou com código de saída {completed.returncode}.")
+        self._log_command_output(completed.stdout)
+
+    def _log_command_output(self, output: str | None) -> None:
+        if not output:
+            return
+        for line in output.rstrip().splitlines():
+            self.logger.info("  %s", line)
 
     def ensure_virtual_environment(self) -> None:
         if self.paths.python.exists():
@@ -112,7 +116,14 @@ class WindowsBuilder:
 
     def build_executable(self) -> None:
         self.run_command(
-            [str(self.paths.python), "-m", "PyInstaller", "--noconfirm", "Assistente de Provas.spec"],
+            [
+                str(self.paths.python),
+                "-m",
+                "PyInstaller",
+                "--noconfirm",
+                "--clean",
+                str(self.paths.root / "Assistente de Provas.spec"),
+            ],
             description="Gerando Assistente de Provas.exe",
         )
         if not self.paths.executable.exists():
@@ -136,7 +147,10 @@ class WindowsBuilder:
             raise BuildFailure(
                 "Inno Setup 6 (ISCC.exe) não foi encontrado. Instale-o e execute este arquivo novamente."
             )
-        self.run_command([str(iscc), "installer\\assistente_de_provas.iss"], description="Gerando instalador Windows")
+        self.run_command(
+            [str(iscc), str(self.paths.root / "installer" / "assistente_de_provas.iss")],
+            description="Gerando instalador Windows",
+        )
         if not self.paths.installer.exists():
             raise BuildFailure(f"O instalador esperado não foi gerado: {self.paths.installer}")
 

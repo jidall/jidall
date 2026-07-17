@@ -1,5 +1,5 @@
 #define MyAppName "Assistente de Provas"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 [Setup]
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
