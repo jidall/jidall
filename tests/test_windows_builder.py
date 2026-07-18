@@ -22,15 +22,32 @@ def test_build_paths_preserve_project_root(tmp_path):
     assert paths.installer.name == "Assistente_de_Provas_Setup.exe"
 
 
-def test_find_inno_setup_uses_program_files(monkeypatch, tmp_path):
-    inno_root = tmp_path / "Program Files (x86)" / "Inno Setup 6"
+def test_find_inno_setup_uses_where_exe_first(monkeypatch, tmp_path):
+    iscc = tmp_path / "Inno Setup 6" / "ISCC.exe"
+    iscc.parent.mkdir(parents=True)
+    iscc.touch()
+
+    def where_run(command, **kwargs):
+        assert command == ["where.exe", "ISCC.exe"]
+        return build_windows.subprocess.CompletedProcess(command, 0, f"{iscc}\n")
+
+    monkeypatch.setattr(build_windows.subprocess, "run", where_run)
+    builder = build_windows.WindowsBuilder(build_windows.BuildPaths(tmp_path), logging.getLogger("test-build"))
+
+    assert builder.find_inno_setup() == iscc
+
+
+def test_find_inno_setup_uses_local_app_data_after_where_fails(monkeypatch, tmp_path):
+    inno_root = tmp_path / "Programs" / "Inno Setup 6"
     inno_root.mkdir(parents=True)
     iscc = inno_root / "ISCC.exe"
     iscc.touch()
-    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "Program Files (x86)"))
-    monkeypatch.delenv("ProgramFiles", raising=False)
-    monkeypatch.setattr(build_windows.shutil, "which", lambda _: None)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
+    def failed_where(command, **kwargs):
+        raise build_windows.subprocess.CalledProcessError(1, command, output="INFO: Could not find files")
+
+    monkeypatch.setattr(build_windows.subprocess, "run", failed_where)
     builder = build_windows.WindowsBuilder(build_windows.BuildPaths(tmp_path), logging.getLogger("test-build"))
 
     assert builder.find_inno_setup() == iscc

@@ -144,13 +144,36 @@ class WindowsBuilder:
         self.log("Executável validado: %s", self.paths.executable)
 
     def find_inno_setup(self) -> Path | None:
-        executable = shutil.which("ISCC.exe") or shutil.which("iscc")
-        if executable:
-            return Path(executable)
+        try:
+            completed = subprocess.run(
+                ["where.exe", "ISCC.exe"],
+                cwd=self.paths.root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, OSError):
+            completed = None
 
-        program_files = [os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")]
-        for base in filter(None, program_files):
-            candidate = Path(base) / "Inno Setup 6" / "ISCC.exe"
+        if completed and completed.stdout:
+            for line in completed.stdout.splitlines():
+                candidate = Path(line.strip())
+                if candidate.exists():
+                    return candidate
+
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        candidates = []
+        if local_app_data:
+            candidates.append(Path(local_app_data) / "Programs" / "Inno Setup 6" / "ISCC.exe")
+        candidates.extend(
+            [
+                Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+                Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+            ]
+        )
+
+        for candidate in candidates:
             if candidate.exists():
                 return candidate
         return None
